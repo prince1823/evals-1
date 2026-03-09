@@ -1,0 +1,103 @@
+non clinical|construction services|contractors
+non clinical|construction services|contractors
+non clinical|construction services|contractors
+non clinical|construction services|contractors
+non clinical|construction services|contractors
+non clinical|construction services|contractors
+non clinical|construction services|contractors
+non clinical|construction services|contractors
+non clinical|telecom|voice and data services
+non clinical|telecom|voice and data services
+non clinical|mro supplies|uniforms
+non clinical|mro supplies|uniforms
+non clinical|mro supplies|uniforms
+non clinical|mro supplies|uniforms
+non clinical|general & administrative|office supplies & equipment
+non clinical|general & administrative|office supplies & equipment
+clinical|clinical supplies|clinical supplies other
+clinical|clinical supplies|clinical supplies other
+non clinical|general & administrative|office supplies & equipment
+non clinical|general & administrative|office supplies & equipment
+non clinical|facilities management and maintenance services|facilities maintenance services other
+non clinical|marketing & print|agency fees
+non clinical|marketing & print|agency fees
+non clinical|marketing & print|agency fees
+non clinical|marketing & print|agency fees
+non clinical|facilities management and maintenance services|janitorial & cleaning services
+non clinical|facilities management and maintenance services|janitorial & cleaning services
+non clinical|professional services|revenue cycle management (rcm) services
+non clinical|professional services|revenue cycle management (rcm) services
+non clinical|professional services|revenue cycle management (rcm) services
+non clinical|professional services|revenue cycle management (rcm) services
+non clinical|general & administrative|office supplies & equipment
+non clinical|general & administrative|office supplies & equipment
+clinical|clinical supplies|medical-surgical supplies
+clinical|clinical supplies|medical-surgical supplies
+clinical|clinical supplies|medical-surgical supplies
+clinical|clinical supplies|medical-surgical supplies
+non clinical|general & administrative|office supplies & equipment
+non clinical|general & administrative|office supplies & equipment
+non clinical|general & administrative|office supplies & equipment
+non clinical|general & administrative|office supplies & equipment
+clinical|clinical supplies|medical-surgical supplies
+clinical|clinical supplies|medical-surgical supplies
+non clinical|general & administrative|office supplies & equipment
+non clinical|general & administrative|office supplies & equipment
+non clinical|human resources|medical, dental and life insurance
+non clinical|marketing & print|agency fees
+non clinical|facilities management and maintenance services|janitorial & cleaning services
+non clinical|facilities management and maintenance services|janitorial & cleaning services
+non clinical|mro supplies|janitorial & cleaning supplies
+non clinical|mro supplies|janitorial & cleaning supplies
+non clinical|human resources|employee screening and background checks
+non clinical|human resources|employee screening and background checks
+non clinical|facilities management and maintenance services|rent and leases
+non clinical|facilities management and maintenance services|rent and leases
+non clinical|facilities management and maintenance services|rent and leases
+non clinical|facilities management and maintenance services|security services
+non clinical|facilities management and maintenance services|security services
+non clinical|general & administrative|office supplies & equipment
+non clinical|general & administrative|office supplies & equipment
+clinical|clinical supplies|medical-surgical supplies
+clinical|clinical supplies|medical-surgical supplies
+clinical|clinical supplies|medical-surgical supplies
+clinical|clinical supplies|medical-surgical supplies
+clinical|clinical supplies|medical-surgical supplies
+clinical|clinical supplies|medical-surgical supplies
+non clinical|mro supplies|uniforms
+non clinical|mro supplies|uniforms
+clinical|it - clinical|telehealth
+clinical|it - clinical|telehealth
+non clinical|facilities management and maintenance services|pest control
+non clinical|facilities management and maintenance services|pest control
+non clinical|it product & services|data center services
+non clinical|it product & services|data center services
+non clinical|it product & services|data center services
+non clinical|it product & services|data center services
+clinical|clinical supplies|medical-surgical supplies
+clinical|clinical supplies|medical-surgical supplies
+clinical|clinical supplies|medical-surgical supplies
+clinical|clinical supplies|medical-surgical supplies
+non clinical|mro supplies|uniforms
+non clinical|mro supplies|uniforms
+clinical|clinical supplies|medical-surgical supplies
+clinical|clinical supplies|medical-surgical supplies
+clinical|pharmacy|pharmacy
+clinical|pharmacy|pharmacy
+clinical|pharmacy|pharmacy
+clinical|pharmacy|pharmacy
+non clinical|telecom|voice and data services
+non clinical|telecom|voice and data services
+non clinical|telecom|voice and data services
+non clinical|telecom|voice and data services
+non clinical|telecom|voice and data services
+non clinical|construction services|architectural & engineering services
+non clinical|construction services|architectural & engineering services
+non clinical|construction services|architectural & engineering services
+non clinical|construction services|architectural & engineering services
+non clinical|marketing & print|agency fees
+non clinical|marketing & print|agency fees
+non clinical|facilities management and maintenance services|pest control
+non clinical|facilities management and maintenance services|pest control
+non clinical|facilities management and maintenance services|pest control
+non clinical|facilities management and maintenance services|pest control
