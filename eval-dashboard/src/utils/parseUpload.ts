@@ -66,10 +66,42 @@ async function parseClassifiedFile(file: File): Promise<Record<string, string>[]
 }
 
 /**
- * Parse an expected file (one classification path per line).
+ * Parse an expected file.
+ * Supports two formats:
+ *   1. Plain text — one classification path per line (level1|level2|level3)
+ *   2. CSV — with Level 1 / Level 2 / Level 3 columns (picks the deepest level column that
+ *      already contains the full pipe-delimited path, or joins them with |)
  */
 async function parseExpectedFile(file: File): Promise<string[]> {
   const text = await readFileText(file);
+  const firstLine = text.split('\n')[0] ?? '';
+
+  // Heuristic: if the first line looks like a CSV header with "Level" columns, parse as CSV
+  const hasLevelHeaders = /level\s*[123]/i.test(firstLine) && firstLine.includes(',');
+
+  if (hasLevelHeaders) {
+    const result = Papa.parse<Record<string, string>>(text, {
+      header: true,
+      skipEmptyLines: true,
+      dynamicTyping: false,
+      transformHeader: (h) => h.trim(),
+    });
+
+    return result.data.map((row) => {
+      const l1 = getStr(row, 'Level 1', 'level_1', 'L1');
+      const l2 = getStr(row, 'Level 2', 'level_2', 'L2');
+      const l3 = getStr(row, 'Level 3', 'level_3', 'L3');
+
+      // If a level column already has the full pipe-delimited path, use the deepest one
+      if (l3 && l3.includes('|')) return l3;
+      if (l2 && l2.includes('|')) return l2;
+
+      // Otherwise join individual level values with |
+      return [l1, l2, l3].filter(Boolean).join('|');
+    });
+  }
+
+  // Plain text: one path per line
   return text
     .split('\n')
     .map((l) => l.trim())

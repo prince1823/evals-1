@@ -161,9 +161,9 @@ export function LandingPage({ onComplete }: LandingPageProps) {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">
                   Expected File
-                  <span className="text-gray-400 font-normal ml-1">(TXT)</span>
+                  <span className="text-gray-400 font-normal ml-1">(CSV/TXT)</span>
                 </label>
-                <p className="text-xs text-gray-400 mb-2">Ground truth — one path per line</p>
+                <p className="text-xs text-gray-400 mb-2">Ground truth — TXT (one path per line) or CSV with Level columns</p>
                 <input
                   ref={expectedRef}
                   type="file"
@@ -296,7 +296,7 @@ export function LandingPage({ onComplete }: LandingPageProps) {
             The classified file should contain columns like <code className="bg-gray-200 px-1 rounded">classification_path</code>, <code className="bg-gray-200 px-1 rounded">canonical_supplier_name</code>, etc.
           </p>
           <p className="text-xs text-gray-400 mt-1">
-            The expected file should have one classification path per line in <code className="bg-gray-200 px-1 rounded">level1|level2|level3</code> format.
+            The expected file can be a TXT with one path per line in <code className="bg-gray-200 px-1 rounded">level1|level2|level3</code> format, or a CSV with <code className="bg-gray-200 px-1 rounded">Level 1</code>, <code className="bg-gray-200 px-1 rounded">Level 2</code>, <code className="bg-gray-200 px-1 rounded">Level 3</code> columns.
           </p>
         </div>
       </div>
