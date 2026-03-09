@@ -37,6 +37,147 @@ function getNum(row: Record<string, string>, ...keys: string[]): number | null {
   return isNaN(n) ? null : n;
 }
 
+// ── Expected file types ──
+
+interface ExpectedRow {
+  path: string;
+  rawRow: Record<string, string> | null;
+}
+
+interface ExpectedFileResult {
+  rows: ExpectedRow[];
+  isCSV: boolean;
+}
+
+// ── Key-based row matching ──
+
+/** Maps pipeline column aliases → expected column aliases for composite key matching. */
+const KEY_COLUMN_MAP: { pipeline: string[]; expected: string[] }[] = [
+  { pipeline: ['supplier_name', 'canonical_supplier_name', 'supplier'], expected: ['Supplier'] },
+  { pipeline: ['line_description', 'description', 'line_desc'], expected: ['Line Item Description'] },
+  { pipeline: ['spend_amount', 'amount'], expected: ['Amount USD', 'Ledger Debit Amount'] },
+  { pipeline: ['invoice_date'], expected: ['Accounting Date'] },
+  { pipeline: ['company'], expected: ['Company'] },
+  { pipeline: ['gl_description', 'gl_desc'], expected: ['GL Account Name'] },
+  { pipeline: ['cost_center', 'cost_center_code'], expected: ['Cost Center Name'] },
+  { pipeline: ['memo'], expected: ['Memo'] },
+];
+
+function normalizeKeyValue(val: string): string {
+  let s = val.trim().toLowerCase().replace(/\s+/g, ' ');
+  // Normalize numeric-looking values (strip $ and , then round)
+  const cleaned = s.replace(/[,$]/g, '');
+  const num = parseFloat(cleaned);
+  if (!isNaN(num) && /^[,$\d.\s-]+$/.test(val.trim())) {
+    s = num.toFixed(2);
+  }
+  return s;
+}
+
+/**
+ * Detect which key columns exist in both a pipeline row and an expected row.
+ * Returns the resolved alias pairs, or null if fewer than 2 columns match.
+ */
+function detectMatchableColumns(
+  pipelineRow: Record<string, string>,
+  expectedRow: Record<string, string>,
+): { pipeline: string[]; expected: string[] }[] | null {
+  const matched: { pipeline: string[]; expected: string[] }[] = [];
+  for (const entry of KEY_COLUMN_MAP) {
+    const pVal = getStr(pipelineRow, ...entry.pipeline);
+    const eVal = getStr(expectedRow, ...entry.expected);
+    if (pVal && eVal) {
+      matched.push(entry);
+    }
+  }
+  return matched.length >= 2 ? matched : null;
+}
+
+function buildRowKey(row: Record<string, string>, keyFields: string[][]): string {
+  return keyFields.map((aliases) => normalizeKeyValue(getStr(row, ...aliases))).join('|||');
+}
+
+interface MatchedPair {
+  classifiedRow: Record<string, string>;
+  expectedPath: string;
+}
+
+/**
+ * Match pipeline rows to expected rows using a composite key built from shared columns.
+ * Falls back to index-based matching if key matching isn't possible.
+ */
+function matchRows(
+  classifiedRows: Record<string, string>[],
+  expectedResult: ExpectedFileResult,
+): MatchedPair[] {
+  // If not CSV or no raw rows, fall back to index matching
+  if (!expectedResult.isCSV || !expectedResult.rows[0]?.rawRow) {
+    return indexMatch(classifiedRows, expectedResult);
+  }
+
+  const columns = detectMatchableColumns(classifiedRows[0], expectedResult.rows[0].rawRow!);
+  if (!columns) {
+    return indexMatch(classifiedRows, expectedResult);
+  }
+
+  const pipelineKeys = columns.map((c) => c.pipeline);
+  const expectedKeys = columns.map((c) => c.expected);
+
+  // Build a map from composite key → list of expected rows (handles duplicates)
+  const expectedMap = new Map<string, ExpectedRow[]>();
+  for (const eRow of expectedResult.rows) {
+    if (!eRow.rawRow) continue;
+    const key = buildRowKey(eRow.rawRow, expectedKeys);
+    const list = expectedMap.get(key) ?? [];
+    list.push(eRow);
+    expectedMap.set(key, list);
+  }
+
+  const pairs: MatchedPair[] = [];
+  let matchedCount = 0;
+
+  for (const row of classifiedRows) {
+    const key = buildRowKey(row, pipelineKeys);
+    const candidates = expectedMap.get(key);
+    if (candidates && candidates.length > 0) {
+      const match = candidates.shift()!; // consume first match (FIFO)
+      if (candidates.length === 0) expectedMap.delete(key);
+      pairs.push({ classifiedRow: row, expectedPath: match.path });
+      matchedCount++;
+    } else {
+      // No match found — leave expected path empty
+      pairs.push({ classifiedRow: row, expectedPath: '' });
+    }
+  }
+
+  const unmatchedCount = classifiedRows.length - matchedCount;
+  if (unmatchedCount > 0) {
+    console.warn(
+      `Key-based matching: ${matchedCount}/${classifiedRows.length} rows matched, ${unmatchedCount} unmatched.`,
+    );
+  }
+
+  return pairs;
+}
+
+function indexMatch(
+  classifiedRows: Record<string, string>[],
+  expectedResult: ExpectedFileResult,
+): MatchedPair[] {
+  const count = Math.min(classifiedRows.length, expectedResult.rows.length);
+  if (classifiedRows.length !== expectedResult.rows.length) {
+    console.warn(
+      `Row count mismatch: classified has ${classifiedRows.length} rows, expected has ${expectedResult.rows.length} lines. Using first ${count}.`,
+    );
+  }
+  return classifiedRows.slice(0, count).map((row, i) => ({
+    classifiedRow: row,
+    expectedPath: expectedResult.rows[i]?.path ?? '',
+  }));
+}
+
+// ── File parsing ──
+
 /**
  * Parse a classified CSV/TXT file into rows.
  */
@@ -72,7 +213,7 @@ async function parseClassifiedFile(file: File): Promise<Record<string, string>[]
  *   2. CSV — with Level 1 / Level 2 / Level 3 columns (picks the deepest level column that
  *      already contains the full pipe-delimited path, or joins them with |)
  */
-async function parseExpectedFile(file: File): Promise<string[]> {
+async function parseExpectedFile(file: File): Promise<ExpectedFileResult> {
   const text = await readFileText(file);
   const firstLine = text.split('\n')[0] ?? '';
 
@@ -87,25 +228,33 @@ async function parseExpectedFile(file: File): Promise<string[]> {
       transformHeader: (h) => h.trim(),
     });
 
-    return result.data.map((row) => {
-      const l1 = getStr(row, 'Level 1', 'level_1', 'L1');
-      const l2 = getStr(row, 'Level 2', 'level_2', 'L2');
-      const l3 = getStr(row, 'Level 3', 'level_3', 'L3');
+    return {
+      isCSV: true,
+      rows: result.data.map((row) => {
+        const l1 = getStr(row, 'Level 1', 'level_1', 'L1');
+        const l2 = getStr(row, 'Level 2', 'level_2', 'L2');
+        const l3 = getStr(row, 'Level 3', 'level_3', 'L3');
 
-      // If a level column already has the full pipe-delimited path, use the deepest one
-      if (l3 && l3.includes('|')) return l3;
-      if (l2 && l2.includes('|')) return l2;
+        let path: string;
+        if (l3 && l3.includes('|')) path = l3;
+        else if (l2 && l2.includes('|')) path = l2;
+        else path = [l1, l2, l3].filter(Boolean).join('|');
 
-      // Otherwise join individual level values with |
-      return [l1, l2, l3].filter(Boolean).join('|');
-    });
+        return { path, rawRow: row };
+      }),
+    };
   }
 
   // Plain text: one path per line
-  return text
+  const lines = text
     .split('\n')
     .map((l) => l.trim())
     .filter(Boolean);
+
+  return {
+    isCSV: false,
+    rows: lines.map((path) => ({ path, rawRow: null })),
+  };
 }
 
 /**
@@ -148,34 +297,27 @@ export async function parseUploadedFiles(
   expectedFile: File,
   datasetName: string,
 ): Promise<ParseResult> {
-  const [classifiedRows, expectedLines] = await Promise.all([
+  const [classifiedRows, expectedResult] = await Promise.all([
     parseClassifiedFile(classifiedFile),
     parseExpectedFile(expectedFile),
   ]);
 
-  if (expectedLines.length === 0) {
+  if (expectedResult.rows.length === 0) {
     throw new Error('Expected file is empty');
   }
   if (classifiedRows.length === 0) {
     throw new Error('Classified file is empty');
   }
 
-  const rowCount = Math.min(classifiedRows.length, expectedLines.length);
-  if (classifiedRows.length !== expectedLines.length) {
-    console.warn(
-      `Row count mismatch: classified has ${classifiedRows.length} rows, expected has ${expectedLines.length} lines. Using first ${rowCount}.`,
-    );
-  }
-
+  const matchedPairs = matchRows(classifiedRows, expectedResult);
   const predColumn = detectPredictionColumn(classifiedRows[0]);
   const safeName = datasetName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
 
   const transactions: Transaction[] = [];
   const companyGroups = new Map<string, Transaction[]>();
 
-  for (let i = 0; i < rowCount; i++) {
-    const row = classifiedRows[i];
-    const expectedPath = expectedLines[i] || '';
+  for (let i = 0; i < matchedPairs.length; i++) {
+    const { classifiedRow: row, expectedPath } = matchedPairs[i];
     const classificationPath = getStr(row, predColumn);
     const correctness = calculateCorrectness(expectedPath, classificationPath);
     const expectedLevels = splitPath(expectedPath);
@@ -263,24 +405,23 @@ export async function previewFiles(
   classifiedColumns: string[];
   sampleRows: { expected: string; predicted: string; supplier: string }[];
 }> {
-  const [classifiedRows, expectedLines] = await Promise.all([
+  const [classifiedRows, expectedResult] = await Promise.all([
     parseClassifiedFile(classifiedFile),
     parseExpectedFile(expectedFile),
   ]);
 
+  const matchedPairs = matchRows(classifiedRows, expectedResult);
   const predCol = classifiedRows.length > 0 ? detectPredictionColumn(classifiedRows[0]) : '';
-  const sampleRows = [];
-  for (let i = 0; i < Math.min(3, classifiedRows.length, expectedLines.length); i++) {
-    sampleRows.push({
-      expected: expectedLines[i] || '',
-      predicted: getStr(classifiedRows[i], predCol),
-      supplier: getStr(classifiedRows[i], 'canonical_supplier_name', 'supplier_name', 'supplier'),
-    });
-  }
+
+  const sampleRows = matchedPairs.slice(0, 3).map((pair) => ({
+    expected: pair.expectedPath,
+    predicted: getStr(pair.classifiedRow, predCol),
+    supplier: getStr(pair.classifiedRow, 'canonical_supplier_name', 'supplier_name', 'supplier'),
+  }));
 
   return {
     classifiedRowCount: classifiedRows.length,
-    expectedLineCount: expectedLines.length,
+    expectedLineCount: expectedResult.rows.length,
     classifiedColumns: classifiedRows.length > 0 ? Object.keys(classifiedRows[0]) : [],
     sampleRows,
   };

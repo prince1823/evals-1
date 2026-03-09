@@ -15,6 +15,7 @@ import { StatCard } from '@/components/common/StatCard';
 import { PathBreadcrumb } from '@/components/common/PathBreadcrumb';
 import { SCORE_COLORS } from '@/utils/colors';
 import { truncate } from '@/utils/format';
+import { ArrowRight } from 'lucide-react';
 import {
   categorizeRootCauses,
   getSupplierErrorConcentration,
@@ -294,16 +295,20 @@ function RootCauseCard({
           {/* Description */}
           <p className="text-sm text-gray-600">{rc.description}</p>
 
-          {/* Affected Suppliers */}
+          {/* Supplier Breakdown with counts */}
           <div>
-            <p className="text-xs font-medium text-gray-500 uppercase mb-1">Affected Suppliers</p>
+            <p className="text-xs font-medium text-gray-500 uppercase mb-1">
+              Affected Suppliers ({rc.supplierBreakdown.length})
+            </p>
             <div className="flex flex-wrap gap-2">
-              {rc.affectedSuppliers.map((s) => (
+              {rc.supplierBreakdown.map((s) => (
                 <span
-                  key={s}
-                  className="inline-block bg-gray-100 text-gray-700 text-xs px-2 py-1 rounded"
+                  key={s.supplier}
+                  className="inline-flex items-center gap-1.5 bg-gray-100 text-gray-700 text-xs px-2.5 py-1 rounded"
                 >
-                  {s}
+                  <span className="font-medium">{s.supplier}</span>
+                  <span className="text-gray-400">·</span>
+                  <span className="text-gray-500">{s.count.toLocaleString()} errors</span>
                 </span>
               ))}
             </div>
@@ -327,14 +332,33 @@ function RootCauseCard({
             </div>
           </div>
 
-          {/* AI Reasoning Excerpt */}
-          {rc.exampleReasoning && (
+          {/* Top Confusion Pairs */}
+          {rc.topConfusionPairs.length > 0 && (
             <div>
-              <p className="text-xs font-medium text-gray-500 uppercase mb-1">
-                AI Reasoning (sample)
+              <p className="text-xs font-medium text-gray-500 uppercase mb-2">
+                Error Pattern Breakdown
               </p>
-              <div className="bg-gray-50 rounded p-3 text-xs text-gray-600 italic leading-relaxed">
-                &ldquo;{truncate(rc.exampleReasoning, 400)}&rdquo;
+              <div className="space-y-1.5">
+                {rc.topConfusionPairs.map((pair, i) => {
+                  const pct = rc.count > 0 ? ((pair.count / rc.count) * 100).toFixed(0) : '0';
+                  return (
+                    <div
+                      key={i}
+                      className="flex items-center gap-2 bg-gray-50 rounded px-3 py-2 text-xs"
+                    >
+                      <span className="font-mono text-green-700 truncate max-w-[35%]" title={pair.expected}>
+                        {pair.expected}
+                      </span>
+                      <ArrowRight className="h-3 w-3 text-gray-400 shrink-0" />
+                      <span className="font-mono text-red-600 truncate max-w-[35%]" title={pair.predicted}>
+                        {pair.predicted}
+                      </span>
+                      <span className="ml-auto shrink-0 text-gray-500 font-medium">
+                        {pair.count.toLocaleString()} <span className="text-gray-400">({pct}%)</span>
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

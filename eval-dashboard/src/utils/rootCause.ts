@@ -1,5 +1,16 @@
 import type { Transaction } from '@/types/data';
 
+export interface ConfusionPair {
+  expected: string;
+  predicted: string;
+  count: number;
+}
+
+export interface SupplierBreakdownEntry {
+  supplier: string;
+  count: number;
+}
+
 export interface RootCause {
   id: string;
   name: string;
@@ -12,179 +23,203 @@ export interface RootCause {
   affectedSuppliers: string[];
   exampleExpected: string;
   examplePredicted: string;
-  exampleReasoning: string;
   suggestedFix: string;
-}
-
-interface SupplierErrorGroup {
-  supplier: string;
-  transactions: Transaction[];
-  dominantScore: number;
-  expectedL3Set: Set<string>;
-  predictedL3Set: Set<string>;
-  expectedL2Set: Set<string>;
-  predictedL2Set: Set<string>;
+  topConfusionPairs: ConfusionPair[];
+  supplierBreakdown: SupplierBreakdownEntry[];
 }
 
 /**
  * Categorize misclassified transactions into root cause groups.
- * Groups by supplier + error pattern to detect systematic issues.
+ *
+ * Groups by the SPECIFIC confusion pattern at the failing level, so instead of
+ * one generic "Domain Misclassification" bucket for all L1 errors, you get
+ * separate root causes like "clinical → non clinical" and "it → facilities".
  */
 export function categorizeRootCauses(allTransactions: Transaction[]): RootCause[] {
   const misclassified = allTransactions.filter((t) => !t.isExactMatch);
   if (misclassified.length === 0) return [];
 
-  // Group by supplier
-  const supplierGroups = new Map<string, Transaction[]>();
+  // Group by specific error pattern at the failing level
+  const patternGroups = new Map<string, Transaction[]>();
+
   for (const t of misclassified) {
-    const key = t.supplierName.toLowerCase().trim();
-    const list = supplierGroups.get(key) ?? [];
+    const score = t.correctnessScore;
+    let patternKey: string;
+
+    if (score === 0) {
+      // L1 wrong: group by expected_L1 → predicted_L1
+      const expL1 = (t.expectedLevels[0] ?? '').toLowerCase();
+      const predL1 = (t.predictedLevels[0] ?? '').toLowerCase();
+      patternKey = `L1:${expL1}→${predL1}`;
+    } else if (score === 1) {
+      // L2 wrong: group by expected_L2 → predicted_L2
+      const expL2 = (t.expectedLevels[1] ?? '').toLowerCase();
+      const predL2 = (t.predictedLevels[1] ?? '').toLowerCase();
+      patternKey = `L2:${expL2}→${predL2}`;
+    } else {
+      // L3 wrong: group by expected_L3 → predicted_L3
+      const expL3 = (t.expectedLevels[2] ?? '').toLowerCase();
+      const predL3 = (t.predictedLevels[2] ?? '').toLowerCase();
+      patternKey = `L3:${expL3}→${predL3}`;
+    }
+
+    const list = patternGroups.get(patternKey) ?? [];
     list.push(t);
-    supplierGroups.set(key, list);
+    patternGroups.set(patternKey, list);
   }
 
-  // Analyze each supplier group
-  const groups: SupplierErrorGroup[] = [];
-  for (const [supplier, txns] of supplierGroups) {
-    const scores = txns.map((t) => t.correctnessScore);
-    const dominantScore = mode(scores);
-    groups.push({
-      supplier,
+  // Build root causes from each pattern group
+  const results: RootCause[] = [];
+
+  for (const [patternKey, txns] of patternGroups) {
+    const [levelStr, patternStr] = patternKey.split(':');
+    const [expectedVal, predictedVal] = (patternStr ?? '').split('→');
+    const score = levelStr === 'L1' ? 0 : levelStr === 'L2' ? 1 : 2;
+    const errorLevel = levelStr as 'L1' | 'L2' | 'L3';
+
+    // Build supplier breakdown
+    const supplierCounts = new Map<string, number>();
+    for (const t of txns) {
+      const s = t.supplierName;
+      supplierCounts.set(s, (supplierCounts.get(s) ?? 0) + 1);
+    }
+    const supplierBreakdown = Array.from(supplierCounts.entries())
+      .map(([supplier, count]) => ({ supplier, count }))
+      .sort((a, b) => b.count - a.count);
+
+    // Build top confusion pairs (full path level)
+    const pairCounts = new Map<string, number>();
+    for (const t of txns) {
+      const key = `${t.expectedPath}|||${t.predictedPath}`;
+      pairCounts.set(key, (pairCounts.get(key) ?? 0) + 1);
+    }
+    const topConfusionPairs = Array.from(pairCounts.entries())
+      .map(([key, count]) => {
+        const [expected, predicted] = key.split('|||');
+        return { expected, predicted, count };
+      })
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
+    const affectedSuppliers = supplierBreakdown.map((s) => s.supplier);
+    const sample = txns[0];
+    const category = detectCategory(score, expectedVal, predictedVal, txns, supplierBreakdown);
+
+    results.push({
+      id: patternKey,
+      name: category.name,
+      description: category.description,
+      severity: category.severity,
+      errorLevel,
+      count: txns.length,
+      percentage: (txns.length / misclassified.length) * 100,
       transactions: txns,
-      dominantScore,
-      expectedL3Set: new Set(txns.map((t) => (t.expectedLevels[2] ?? '').toLowerCase())),
-      predictedL3Set: new Set(txns.map((t) => (t.predictedLevels[2] ?? '').toLowerCase())),
-      expectedL2Set: new Set(txns.map((t) => (t.expectedLevels[1] ?? '').toLowerCase())),
-      predictedL2Set: new Set(txns.map((t) => (t.predictedLevels[1] ?? '').toLowerCase())),
+      affectedSuppliers,
+      exampleExpected: sample.expectedPath,
+      examplePredicted: sample.predictedPath,
+      suggestedFix: category.suggestedFix,
+      topConfusionPairs,
+      supplierBreakdown,
     });
   }
 
-  // Categorize each group into a root cause
-  const rootCauseMap = new Map<string, RootCause>();
-
-  for (const group of groups) {
-    const category = detectCategory(group);
-    const existing = rootCauseMap.get(category.id);
-
-    if (existing) {
-      existing.count += group.transactions.length;
-      existing.transactions.push(...group.transactions);
-      if (!existing.affectedSuppliers.includes(group.transactions[0].supplierName)) {
-        existing.affectedSuppliers.push(group.transactions[0].supplierName);
-      }
-    } else {
-      const sample = group.transactions[0];
-      rootCauseMap.set(category.id, {
-        id: category.id,
-        name: category.name,
-        description: category.description,
-        severity: category.severity,
-        errorLevel: category.errorLevel,
-        count: group.transactions.length,
-        percentage: 0,
-        transactions: [...group.transactions],
-        affectedSuppliers: [sample.supplierName],
-        exampleExpected: sample.expectedPath,
-        examplePredicted: sample.predictedPath,
-        exampleReasoning: sample.reasoning,
-        suggestedFix: category.suggestedFix,
-      });
-    }
-  }
-
-  // Calculate percentages and sort by count desc
-  const results = Array.from(rootCauseMap.values());
-  for (const rc of results) {
-    rc.percentage = (rc.count / misclassified.length) * 100;
-  }
   results.sort((a, b) => b.count - a.count);
-
   return results;
 }
 
-function detectCategory(group: SupplierErrorGroup): {
-  id: string;
+function detectCategory(
+  score: number,
+  expectedVal: string,
+  predictedVal: string,
+  txns: Transaction[],
+  supplierBreakdown: SupplierBreakdownEntry[],
+): {
   name: string;
   description: string;
   severity: 'critical' | 'major' | 'minor';
-  errorLevel: 'L1' | 'L2' | 'L3';
   suggestedFix: string;
 } {
-  const sample = group.transactions[0];
-  const score = group.dominantScore;
+  const topSupplier = supplierBreakdown[0]?.supplier ?? 'unknown';
+  const topSupplierCount = supplierBreakdown[0]?.count ?? 0;
+  const topSupplierPct = txns.length > 0 ? ((topSupplierCount / txns.length) * 100).toFixed(0) : '0';
+  const supplierCount = supplierBreakdown.length;
 
-  // Score 0: L1 is wrong — domain misclassification
   if (score === 0) {
-    const expL1 = sample.expectedLevels[0] ?? '';
-    const predL1 = sample.predictedLevels[0] ?? '';
     return {
-      id: 'domain-misclassification',
-      name: 'Domain Misclassification',
-      description: `The AI classifies transactions into the wrong top-level domain (L1). Expected "${expL1}" but predicted "${predL1}". This is the most severe error type — the AI fundamentally misunderstands the transaction's business context.`,
+      name: `L1: "${expectedVal}" classified as "${predictedVal}"`,
+      description:
+        `${txns.length} transactions expected in the "${expectedVal}" domain were classified as "${predictedVal}". ` +
+        `This affects ${supplierCount} supplier${supplierCount > 1 ? 's' : ''}, ` +
+        `with "${topSupplier}" accounting for ${topSupplierPct}% of these errors (${topSupplierCount} transactions). ` +
+        `This is a critical error — the AI fundamentally misidentifies the business context.`,
       severity: 'critical',
-      errorLevel: 'L1',
-      suggestedFix: `Improve L1 classification by adding supplier-specific rules. For suppliers like "${sample.supplierName}", ensure the supplier profile correctly maps to the "${expL1}" domain. Consider adding keyword disambiguation rules (e.g., "lab fees" in HR context ≠ clinical laboratory).`,
+      suggestedFix:
+        `Add supplier-specific L1 mapping rules. ` +
+        (supplierCount <= 3
+          ? `Create explicit profiles for ${supplierBreakdown.map((s) => `"${s.supplier}"`).join(', ')} that map to the "${expectedVal}" domain.`
+          : `Prioritize "${topSupplier}" (${topSupplierCount} errors), then address the remaining ${supplierCount - 1} suppliers. `) +
+        ` Review the taxonomy boundary between "${expectedVal}" and "${predictedVal}" for ambiguous transactions.`,
     };
   }
 
-  // Score 1: L1 correct, L2 wrong — category boundary confusion
   if (score === 1) {
-    const expL2 = sample.expectedLevels[1] ?? '';
-    const predL2 = sample.predictedLevels[1] ?? '';
+    const sample = txns[0];
+    const l1 = sample.expectedLevels[0] ?? '';
     return {
-      id: 'category-boundary-confusion',
-      name: 'Category Boundary Confusion',
-      description: `The AI gets the right domain (L1) but picks the wrong category (L2). Expected "${expL2}" but predicted "${predL2}". The categories are related but the AI fails to distinguish between them.`,
+      name: `L2: "${expectedVal}" → "${predictedVal}"`,
+      description:
+        `${txns.length} transactions within the "${l1}" domain have the wrong L2 category: ` +
+        `expected "${expectedVal}" but classified as "${predictedVal}". ` +
+        `This affects ${supplierCount} supplier${supplierCount > 1 ? 's' : ''}, ` +
+        `with "${topSupplier}" accounting for ${topSupplierPct}% (${topSupplierCount} transactions). ` +
+        `The AI correctly identifies the domain but confuses related categories within it.`,
       severity: 'major',
-      errorLevel: 'L2',
-      suggestedFix: `Add taxonomy disambiguation rules for the "${sample.expectedLevels[0]}" domain to distinguish "${expL2}" from "${predL2}". Create supplier profiles for "${sample.supplierName}" that explicitly map to the "${expL2}" category.`,
+      suggestedFix:
+        `Add disambiguation rules within the "${l1}" domain to distinguish "${expectedVal}" from "${predictedVal}". ` +
+        `For "${topSupplier}", create a supplier profile that explicitly maps to "${expectedVal}". ` +
+        `Review whether the line descriptions or GL codes can help differentiate these categories.`,
     };
   }
 
-  // Score 2: L1+L2 correct, L3 wrong
-  const expL3 = sample.expectedLevels[2] ?? '';
-  const predL3 = sample.predictedLevels[2] ?? '';
+  // Score 2: L3 wrong
+  const sample = txns[0];
+  const l1 = sample.expectedLevels[0] ?? '';
+  const l2 = sample.expectedLevels[1] ?? '';
 
-  // Check if predicted L3 is a generic/catch-all ("other", "general", etc.)
+  // Detect if predicted is a generic catch-all
   const genericTerms = ['other', 'general', 'miscellaneous', 'misc', 'unclassified'];
-  const predictedIsGeneric = genericTerms.some((term) => predL3.toLowerCase().includes(term));
+  const predictedIsGeneric = genericTerms.some((t) => predictedVal.includes(t));
 
   if (predictedIsGeneric) {
     return {
-      id: 'taxonomy-specificity-gap',
-      name: 'Taxonomy Specificity Gap',
-      description: `The AI correctly identifies L1 and L2 but defaults to a generic L3 category ("${predL3}") instead of the specific one ("${expL3}"). The model lacks confidence to pick the precise subcategory.`,
+      name: `L3: "${expectedVal}" defaulting to "${predictedVal}"`,
+      description:
+        `${txns.length} transactions under "${l1} > ${l2}" are classified into the generic catch-all ` +
+        `"${predictedVal}" instead of the specific subcategory "${expectedVal}". ` +
+        `This affects ${supplierCount} supplier${supplierCount > 1 ? 's' : ''}, ` +
+        `with "${topSupplier}" accounting for ${topSupplierPct}% (${topSupplierCount} transactions). ` +
+        `The AI lacks confidence to select the precise L3 subcategory and falls back to a generic label.`,
       severity: 'minor',
-      errorLevel: 'L3',
-      suggestedFix: `Add explicit L3 mapping rules for "${sample.expectedLevels[1]}" subcategories. For suppliers like "${sample.supplierName}", create profiles that specify the exact L3 category "${expL3}" instead of falling back to "${predL3}".`,
+      suggestedFix:
+        `Add explicit L3 mapping rules for the "${l2}" category. ` +
+        `For "${topSupplier}", create a supplier profile that specifies "${expectedVal}" as the L3 category. ` +
+        `Consider adding keyword rules based on line descriptions to disambiguate "${expectedVal}" from the generic "${predictedVal}".`,
     };
   }
 
-  // Check if the expected L3 is a service/fee type but predicted is a product/deliverable
-  const serviceTerms = ['fees', 'services', 'management', 'consulting', 'agency'];
-  const deliverableTerms = ['supplies', 'print', 'equipment', 'materials', 'products'];
-  const expIsService = serviceTerms.some((t) => expL3.toLowerCase().includes(t));
-  const predIsDeliverable = deliverableTerms.some((t) => predL3.toLowerCase().includes(t));
-
-  if (expIsService && predIsDeliverable) {
-    return {
-      id: 'service-vs-deliverable',
-      name: 'Service vs Deliverable Confusion',
-      description: `The AI confuses service-level categories ("${expL3}") with deliverable-level categories ("${predL3}"). It classifies based on what was delivered rather than the service type.`,
-      severity: 'minor',
-      errorLevel: 'L3',
-      suggestedFix: `Add classification guidance to distinguish service categories from deliverable categories. For "${sample.expectedLevels[1]}", ensure the AI classifies by service type (e.g., "${expL3}") rather than the physical deliverable.`,
-    };
-  }
-
-  // Default for score 2: subcategory confusion (related L3 categories)
   return {
-    id: 'subcategory-confusion',
-    name: 'Subcategory Confusion',
-    description: `The AI correctly identifies L1 and L2 but picks a related but incorrect L3 subcategory. Expected "${expL3}" but predicted "${predL3}". These subcategories are semantically similar.`,
+    name: `L3: "${expectedVal}" → "${predictedVal}"`,
+    description:
+      `${txns.length} transactions under "${l1} > ${l2}" are classified as ` +
+      `"${predictedVal}" instead of "${expectedVal}". ` +
+      `This affects ${supplierCount} supplier${supplierCount > 1 ? 's' : ''}, ` +
+      `with "${topSupplier}" accounting for ${topSupplierPct}% (${topSupplierCount} transactions). ` +
+      `These subcategories are semantically similar, and the AI picks the wrong one.`,
     severity: 'minor',
-    errorLevel: 'L3',
-    suggestedFix: `Clarify the distinction between "${expL3}" and "${predL3}" in the taxonomy. Add supplier-specific rules for "${sample.supplierName}" to map to the correct L3 category.`,
+    suggestedFix:
+      `Clarify the taxonomy distinction between "${expectedVal}" and "${predictedVal}" within "${l2}". ` +
+      `For "${topSupplier}", add a supplier-specific rule mapping to "${expectedVal}". ` +
+      `Review line descriptions to find distinguishing keywords that could drive correct L3 selection.`,
   };
 }
 
