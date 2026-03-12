@@ -127,6 +127,8 @@ export interface SupplierAccuracyEntry {
   supplierName: string;
   cube: string;
   totalTransactions: number;
+  classifiedTransactions: number;
+  errorTransactions: number;
   exactMatchCount: number;
   l1Accuracy: number;
   l2Accuracy: number;

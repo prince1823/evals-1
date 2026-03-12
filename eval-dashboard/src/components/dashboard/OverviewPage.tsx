@@ -22,6 +22,16 @@ import { pct } from '@/utils/format';
 export function OverviewPage() {
   const { filteredTransactions, data, filters } = useEvalData();
 
+  // Separate classified vs error rows
+  const classifiedTransactions = useMemo(
+    () => filteredTransactions.filter((t) => t.classificationStatus !== 'classification_error'),
+    [filteredTransactions],
+  );
+  const errorTransactions = useMemo(
+    () => filteredTransactions.filter((t) => t.classificationStatus === 'classification_error'),
+    [filteredTransactions],
+  );
+
   const accuracy = useMemo(
     () => computeLevelAccuracy(filteredTransactions),
     [filteredTransactions],
@@ -37,9 +47,13 @@ export function OverviewPage() {
     return Array.from(groups.entries())
       .map(([supplier, txns]) => {
         const acc = computeLevelAccuracy(txns);
+        const classified = txns.filter((t) => t.classificationStatus !== 'classification_error');
+        const errors = txns.length - classified.length;
         return {
           supplier,
           total: txns.length,
+          classified: classified.length,
+          errors,
           L1: acc.l1.pct,
           L2: acc.l2.pct,
           L3: acc.l3.pct,
@@ -50,8 +64,9 @@ export function OverviewPage() {
   }, [filteredTransactions]);
 
   const scoreDistribution = useMemo(() => {
+    // Only include classified rows in score distribution
     const counts: Record<number, number> = { 0: 0, 1: 0, 2: 0, 3: 0 };
-    for (const t of filteredTransactions) {
+    for (const t of classifiedTransactions) {
       const s = Math.min(t.correctnessScore, 3);
       counts[s] = (counts[s] || 0) + 1;
     }
@@ -61,7 +76,7 @@ export function OverviewPage() {
       { name: 'L1+L2 (2)', value: counts[2], color: SCORE_COLORS[2] },
       { name: 'Exact (3)', value: counts[3], color: SCORE_COLORS[3] },
     ];
-  }, [filteredTransactions]);
+  }, [classifiedTransactions]);
 
   const trendData = useMemo(() => {
     if (!data) return [];
@@ -90,13 +105,20 @@ export function OverviewPage() {
 
   const quickInsights = useMemo(() => {
     const insights: string[] = [];
-    const total = filteredTransactions.length;
-    if (total === 0) return ['No transactions match current filters.'];
+    const total = classifiedTransactions.length;
+    if (total === 0) return ['No classified transactions match current filters.'];
 
-    const l1Errors = filteredTransactions.filter((t) => t.correctnessScore === 0);
+    if (errorTransactions.length > 0) {
+      const errorPct = ((errorTransactions.length / filteredTransactions.length) * 100).toFixed(1);
+      insights.push(
+        `${errorTransactions.length.toLocaleString()} rows (${errorPct}%) failed classification — excluded from accuracy metrics.`,
+      );
+    }
+
+    const l1Errors = classifiedTransactions.filter((t) => t.correctnessScore === 0);
     const l1ErrorRate = ((l1Errors.length / total) * 100).toFixed(1);
     insights.push(
-      `${l1Errors.length} transactions (${l1ErrorRate}%) have L1 errors — the most fundamental misclassifications.`,
+      `${l1Errors.length} classified transactions (${l1ErrorRate}%) have L1 errors — the most fundamental misclassifications.`,
     );
 
     // Find most common L1 misclassification
@@ -121,19 +143,19 @@ export function OverviewPage() {
     }
 
     // Unknown supplier impact
-    const unknownSupplier = filteredTransactions.filter(
+    const unknownSupplier = classifiedTransactions.filter(
       (t) => t.supplierProfile?.confidence === 'low' || !t.supplierProfile,
     );
     if (unknownSupplier.length > 0) {
       const unknownExact = unknownSupplier.filter((t) => t.isExactMatch).length;
       const unknownPct = ((unknownExact / unknownSupplier.length) * 100).toFixed(1);
       insights.push(
-        `${unknownSupplier.length} transactions have low/no supplier profile — their exact match rate is only ${unknownPct}%.`,
+        `${unknownSupplier.length} classified transactions have low/no supplier profile — their exact match rate is only ${unknownPct}%.`,
       );
     }
 
     return insights;
-  }, [filteredTransactions, bySupplierData]);
+  }, [filteredTransactions, classifiedTransactions, errorTransactions, bySupplierData]);
 
   return (
     <div className="space-y-6">
@@ -142,6 +164,40 @@ export function OverviewPage() {
         {filteredTransactions.length.toLocaleString()} transactions across{' '}
         {new Set(filteredTransactions.map((t) => t.supplierName)).size} suppliers
       </p>
+
+      {/* Classification Coverage */}
+      {errorTransactions.length > 0 && (
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Classification Coverage</h3>
+          <div className="flex items-center gap-6 text-sm">
+            <div>
+              <span className="text-gray-500">Total Rows:</span>{' '}
+              <span className="font-semibold">{filteredTransactions.length.toLocaleString()}</span>
+            </div>
+            <div>
+              <span className="text-gray-500">Classified by AI:</span>{' '}
+              <span className="font-semibold text-green-700">
+                {classifiedTransactions.length.toLocaleString()} ({((classifiedTransactions.length / filteredTransactions.length) * 100).toFixed(1)}%)
+              </span>
+            </div>
+            <div>
+              <span className="text-gray-500">Classification Errors:</span>{' '}
+              <span className="font-semibold text-red-600">
+                {errorTransactions.length.toLocaleString()} ({((errorTransactions.length / filteredTransactions.length) * 100).toFixed(1)}%)
+              </span>
+            </div>
+          </div>
+          <div className="mt-2 h-2 rounded-full bg-gray-100 overflow-hidden">
+            <div
+              className="h-full bg-green-500 rounded-full"
+              style={{ width: `${(classifiedTransactions.length / filteredTransactions.length) * 100}%` }}
+            />
+          </div>
+          <p className="mt-2 text-xs text-gray-400">
+            Accuracy metrics below are computed only on classified rows. Error rows are excluded from the denominator.
+          </p>
+        </div>
+      )}
 
       {/* Accuracy Cards */}
       <div className="grid grid-cols-4 gap-4">
@@ -249,7 +305,7 @@ type SortKey = 'supplier' | 'total' | 'L1' | 'L2' | 'L3' | 'Exact';
 function SupplierAccuracyTable({
   data,
 }: {
-  data: { supplier: string; total: number; L1: number; L2: number; L3: number; Exact: number }[];
+  data: { supplier: string; total: number; classified: number; errors: number; L1: number; L2: number; L3: number; Exact: number }[];
 }) {
   const [sortKey, setSortKey] = useState<SortKey>('total');
   const [sortAsc, setSortAsc] = useState(false);

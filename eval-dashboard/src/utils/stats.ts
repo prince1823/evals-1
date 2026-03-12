@@ -7,15 +7,19 @@ import type {
 } from '@/types/data';
 
 export function computeLevelAccuracy(transactions: Transaction[]): LevelAccuracy {
-  const total = transactions.length;
+  // Exclude classification_error rows — accuracy is only meaningful for classified rows
+  const classified = transactions.filter(
+    (t) => t.classificationStatus !== 'classification_error',
+  );
+  const total = classified.length;
   if (total === 0) {
     const zero = { correct: 0, total: 0, pct: 0 };
     return { l1: zero, l2: zero, l3: zero, exact: zero };
   }
-  const l1 = transactions.filter((t) => t.correctnessScore >= 1).length;
-  const l2 = transactions.filter((t) => t.correctnessScore >= 2).length;
-  const l3 = transactions.filter((t) => t.correctnessScore >= 3).length;
-  const exact = transactions.filter((t) => t.isExactMatch).length;
+  const l1 = classified.filter((t) => t.correctnessScore >= 1).length;
+  const l2 = classified.filter((t) => t.correctnessScore >= 2).length;
+  const l3 = classified.filter((t) => t.correctnessScore >= 3).length;
+  const exact = classified.filter((t) => t.isExactMatch).length;
   return {
     l1: { correct: l1, total, pct: +((l1 / total) * 100).toFixed(1) },
     l2: { correct: l2, total, pct: +((l2 / total) * 100).toFixed(1) },
@@ -36,15 +40,20 @@ export function aggregateBySupplier(transactions: Transaction[]): SupplierAccura
     .map(([key, txns]) => {
       const [supplierName, cube] = key.split('|||');
       const total = txns.length;
+      // Compute accuracy only over classified (non-error) rows
+      const classified = txns.filter((t) => t.classificationStatus !== 'classification_error');
+      const classifiedTotal = classified.length;
       const confidence = txns[0]?.supplierProfile?.confidence ?? 'unknown';
       return {
         supplierName,
         cube,
         totalTransactions: total,
-        exactMatchCount: txns.filter((t) => t.isExactMatch).length,
-        l1Accuracy: +(txns.filter((t) => t.correctnessScore >= 1).length / total * 100).toFixed(1),
-        l2Accuracy: +(txns.filter((t) => t.correctnessScore >= 2).length / total * 100).toFixed(1),
-        l3Accuracy: +(txns.filter((t) => t.correctnessScore >= 3).length / total * 100).toFixed(1),
+        classifiedTransactions: classifiedTotal,
+        errorTransactions: total - classifiedTotal,
+        exactMatchCount: classified.filter((t) => t.isExactMatch).length,
+        l1Accuracy: classifiedTotal > 0 ? +(classified.filter((t) => t.correctnessScore >= 1).length / classifiedTotal * 100).toFixed(1) : 0,
+        l2Accuracy: classifiedTotal > 0 ? +(classified.filter((t) => t.correctnessScore >= 2).length / classifiedTotal * 100).toFixed(1) : 0,
+        l3Accuracy: classifiedTotal > 0 ? +(classified.filter((t) => t.correctnessScore >= 3).length / classifiedTotal * 100).toFixed(1) : 0,
         profileConfidence: confidence,
         isKnown: confidence !== 'low' && confidence !== 'unknown',
       };
@@ -57,7 +66,7 @@ export function buildConfusionMatrix(
   level: number,
 ): ConfusionCell[] {
   const counts = new Map<string, { count: number; ids: string[] }>();
-  for (const t of transactions) {
+  for (const t of transactions.filter((t) => t.classificationStatus !== 'classification_error')) {
     const expected = t.expectedLevels[level - 1]?.toLowerCase() ?? '(missing)';
     const predicted = t.predictedLevels[level - 1]?.toLowerCase() ?? '(missing)';
     const key = `${expected}|||${predicted}`;
@@ -77,6 +86,7 @@ export function findMisclassificationPairs(
   level: number,
 ): MisclassificationPair[] {
   const misclassified = transactions.filter((t) => {
+    if (t.classificationStatus === 'classification_error') return false;
     const exp = t.expectedLevels[level - 1]?.toLowerCase();
     const pred = t.predictedLevels[level - 1]?.toLowerCase();
     return exp && pred && exp !== pred;

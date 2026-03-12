@@ -54,7 +54,7 @@ interface ExpectedFileResult {
 /** Maps pipeline column aliases → expected column aliases for composite key matching. */
 const KEY_COLUMN_MAP: { pipeline: string[]; expected: string[] }[] = [
   { pipeline: ['supplier_name', 'canonical_supplier_name', 'supplier'], expected: ['Supplier'] },
-  { pipeline: ['line_description', 'description', 'line_desc'], expected: ['Line Item Description'] },
+  { pipeline: ['line_item_description', 'line_description', 'description', 'line_desc'], expected: ['Line Item Description'] },
   { pipeline: ['spend_amount', 'amount'], expected: ['Amount USD', 'Ledger Debit Amount'] },
   { pipeline: ['invoice_date'], expected: ['Accounting Date'] },
   { pipeline: ['company'], expected: ['Company'] },
@@ -339,7 +339,7 @@ export async function parseUploadedFiles(
       correctnessScore: correctness,
       isExactMatch: correctness >= maxLevel && maxLevel > 0,
       supplierName: getStr(row, 'canonical_supplier_name', 'supplier_name', 'supplier'),
-      lineDescription: getStr(row, 'line_description', 'description', 'line_desc'),
+      lineDescription: getStr(row, 'line_item_description', 'line_description', 'description', 'line_desc'),
       amount: getNum(row, 'spend_amount', 'amount'),
       department: company,
       costCenter: getStr(row, 'cost_center', 'cost_center_code'),

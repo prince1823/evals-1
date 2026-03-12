@@ -36,7 +36,11 @@ export interface RootCause {
  * separate root causes like "clinical → non clinical" and "it → facilities".
  */
 export function categorizeRootCauses(allTransactions: Transaction[]): RootCause[] {
-  const misclassified = allTransactions.filter((t) => !t.isExactMatch);
+  // Exclude classification_error rows — they aren't misclassifications, they're processing failures
+  const classified = allTransactions.filter(
+    (t) => t.classificationStatus !== 'classification_error',
+  );
+  const misclassified = classified.filter((t) => !t.isExactMatch);
   if (misclassified.length === 0) return [];
 
   // Group by specific error pattern at the failing level
@@ -246,7 +250,10 @@ function mode(arr: number[]): number {
 export function getSupplierErrorConcentration(
   transactions: Transaction[],
 ): { supplier: string; count: number; scores: Record<number, number> }[] {
-  const misclassified = transactions.filter((t) => !t.isExactMatch);
+  const classified = transactions.filter(
+    (t) => t.classificationStatus !== 'classification_error',
+  );
+  const misclassified = classified.filter((t) => !t.isExactMatch);
   const groups = new Map<string, Transaction[]>();
   for (const t of misclassified) {
     const list = groups.get(t.supplierName) ?? [];
@@ -271,7 +278,10 @@ export function getMissingProfileStats(transactions: Transaction[]): {
   missingProfileCount: number;
   uniqueSuppliersWithoutProfile: string[];
 } {
-  const misclassified = transactions.filter((t) => !t.isExactMatch);
+  const classified = transactions.filter(
+    (t) => t.classificationStatus !== 'classification_error',
+  );
+  const misclassified = classified.filter((t) => !t.isExactMatch);
   const noProfile = misclassified.filter((t) => !t.supplierProfile);
   const suppliers = new Set(noProfile.map((t) => t.supplierName));
   return {
